@@ -1,6 +1,6 @@
 {
   "name": "redis-monitor",
-  "version": "0.0.0",
+  "version": "0.0.1",
   "description": "Redis Monitor",
   "keywords": [
     "redis",
@@ -9,7 +9,7 @@
   "author": "Daniel D. Shaw <dshaw@dshaw.com> (http://dshaw.com)",
   "repository": {
     "type": "git",
-    "url": "https://github.com/dshaw/redis-monitor"
+    "url": "git://github.com/dshaw/redis-monitor.git"
   },
   "bugs": {
     "url": "http://github.com/dshaw/redis-monitor/issues"
