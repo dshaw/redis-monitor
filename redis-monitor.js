@@ -3,40 +3,42 @@
 var util = require('util')
   , redis = require('redis')
   , uuid = require('node-uuid')
-  , defaults = { monitor: true,  debug: true, interval: 10*1000 }
+  , defaults = { monitor: false, debug: false, interval: 10*1000 }
   , options = require('optimist').default(defaults).argv
   , client = redis.createClient(options.port, options.host, options)
   , logger = options.logger ? require(options.logger) : console
   , debug = options.debug ? console.log : function noop () {}
-  , cdir = console.dir
   , lastUpdate = null
   , updates = 0
 
-try {
-  cdir = require('cdir') // try to use `cdir` if it's available.
-} catch (err) {}
-
+// realtime info
 client.rti = {
   name: options.name || 'rti' + uuid.v4()
 , interval: options.interval
 , info: {}
 }
 
+// realtime info methods
+client.rtim = {
+  parseChanges: parseChanges
+, parseInfo: parseInfo
+}
+
+
 _handleInterval()
 client.rti.intervalId = setInterval(_handleInterval, client.rti.interval)
+
 
 if (options.monitor) {
   client.monitor(function (err, res) {
     if (err) return logger.error(err)
-    logger.log('Entering monitoring mode.')
+    debug('Entering monitoring mode.')
   })
 
   client.on('monitor', function (time, args) {
     if (args[0] !== 'info') {
       var intervalSec = client.rti.interval/1000
         , delta = Math.round(time) - Math.round(lastUpdate/1000) // seconds
-
-      logger.log('monitor', args, Math.round(time), delta, delta > intervalSec, intervalSec, updates)
 
       if (!lastUpdate || delta > intervalSec) {
         client.info(_updateInfo)
@@ -45,12 +47,13 @@ if (options.monitor) {
   })
 }
 
+
 if (options.debug) {
   client.on('update', function (update) {
-    logger.log('update', update)
-    logger.log()
+    debug('update', update)
   })
 }
+
 
 function parseChanges (oldInfo, newInfo) {
   return Object.keys(newInfo).reduce(function (acc, x) {
@@ -62,9 +65,7 @@ function parseChanges (oldInfo, newInfo) {
 }
 
 function parseInfo (info) {
-  var infoLines = info.toString().split("\r\n")
-
-  return infoLines.reduce(function (acc, x) {
+  return info.toString().split('\r\n').reduce(function (acc, x) {
     var kv = x.split(':')
     if (kv[1]) acc[kv[0]] = kv[1]
     return acc
@@ -75,7 +76,7 @@ function parseInfo (info) {
 function _handleInterval () {
   var delta = Date.now() - lastUpdate // ms
 
-  logger.log('interval', delta, delta > client.rti.interval)
+  debug('interval', delta, delta > client.rti.interval)
 
   if (delta > client.rti.interval) {}
 
