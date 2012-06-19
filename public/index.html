@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Redis Monitor by @dshaw</title>
+  <style>
+    body { margin: 0 }
+    #rtilist {
+      width: 100%;
+      height: 100%;
+      padding: 2em;
+      background-color: white;
+      color: black;
+      font-size: 2em;
+      text-align: center;
+      text-shadow: 4px 4px 1px #e5e5e5;
+      -webkit-transform: scale(1);
+    }
+    #ticker {
+      position: absolute;
+      bottom: 0;
+      width: 100%;
+      padding: 10px;
+      overflow: hidden;
+      white-space: nowrap;
+      text-align: right;
+      direction: rtl;
+      background-color: rgba(0,0,0,.5);
+      color: white;
+      text-shadow: 1px 1px 1px #e5e5e5;
+      height: 1.2em;
+    }
+    #ticker span { padding: 10px }
+    #ticker .reserved { background-color: rgba(255,255,0,.5) }
+    #ticker .purchased { background-color: rgba(0,255,0,.5) }
+    #ticker .activity { background-color: rgba(255,0,0,.5) }
+  </style>
+</head>
+<body>
+<div id=rtilist></div>
+<footer id=ticker></footer>
+
+<script src="/js/jquery-1.7.2.min.js"></script>
+<script src="/socket.io/socket.io.js"></script>
+<script>
+  var socket = io.connect()
+
+  socket.on('rti:list', function (list) {
+    $('#rtilist').text(JSON.stringify(list))
+
+    if (list.length) {
+      var monitor = list[0]
+
+      socket.on(monitor, function (info) {
+        $('#rtilist').prepend('<div>'+monitor+'<br>'+JSON.stringify(info, null, 2)+'</div>')
+      })
+      socket.on(monitor+':update', function (info) {
+        console.log(monitor+':update', info)
+        $('#rtilist').prepend('<div>'+monitor+':update<br>'+JSON.stringify(info, null, 2)+'</div>')
+      })
+
+      console.log('rti:info', monitor)
+      socket.emit('rti:info', monitor)
+    }
+  })
+
+  $('#nodeId').live('dblclick', function() { socket.emit('restart') })
+</script>
+</body>
+</html>
