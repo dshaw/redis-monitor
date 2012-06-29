@@ -18,7 +18,7 @@ var path = require('path')
  * Configuration.
  */
 
-var options = optimist.default({ httpport: 8880, announce: true }).argv
+var options = optimist.default({ httpport: 8888, announce: true }).argv
   , client = redisMonitor(options)
   , redisStore = new sio.RedisStore({ nodeId: function () { return options.nodeid } })
   , app = tako({ socketio: sio })
