@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <title>Redis Monitor by @dshaw</title>
   <link type="text/css" rel="stylesheet" href="/css/rickshaw.min.css">
+  <link type="text/css" rel="stylesheet" href="/css/graph.css">
   <style>
     body {
       margin: 0;
@@ -11,7 +12,6 @@
     }
     #header {
       width: 100%;
-      /*height: 100%;*/
       padding: .25em 1.5em;
       border-top: 1px solid black;
       background-color: #333;
@@ -21,7 +21,6 @@
       background: -ms-linear-gradient(#323232, #000000);
       background: linear-gradient(#323232, #000000);
       color: #C0C1C5;
-      /*height: 45px;*/
       -webkit-transform: scale(1);
       -webkit-box-shadow: #999999, 0px, 4px, 8px;
       -moz-box-shadow: #999999, 0px, 4px, 8px;
@@ -48,45 +47,26 @@
       text-shadow: 4px 4px 1px #e5e5e5;
       -webkit-transform: scale(1);
     }
-    #data {
+    #servers {
       width: 100%;
       /*height: 100%;*/
       padding: 2em;
       background-color: white;
       color: black;
     }
-    #data .name {
+    #servers .name {
       color: #4682b4;
       font-weight: bold;
       text-shadow: 4px 4px 1px #e5e5e5;
       margin: 0 2px 8px 2px;
     }
-    #data .info { background-color: rgba(120,120,120,.5) }
-    #data .key, #data .val {
+    #servers .info { background-color: rgba(120,120,120,.5) }
+    #servers .key, #servers .val {
       display: inline-block;
       width: 250px;
       margin: 2px;
     }
-    #data .key { margin-right: 10px }
-    #ticker {
-      position: absolute;
-      bottom: 0;
-      width: 100%;
-      padding: 10px;
-      overflow: hidden;
-      white-space: nowrap;
-      text-align: right;
-      direction: rtl;
-      background-color: rgba(0,0,0,.5);
-      color: white;
-      text-shadow: 1px 1px 1px #e5e5e5;
-      height: 1.2em;
-    }
-    #ticker span { padding: 10px }
-    #ticker .reserved { background-color: rgba(255,255,0,.5) }
-    #ticker .purchased { background-color: rgba(0,255,0,.5) }
-    #ticker .activity { background-color: rgba(255,0,0,.5) }
-    .minimize {}
+    #servers .key { margin-right: 10px }
     .rid { color: #DE2B21 }
     .headsup {
       clear: both;
@@ -115,18 +95,16 @@
     }
     .memory_graph {
       clear: both;
-      width: 1050px;
+      width: 1080px;
       position: relative;
       margin-bottom: 1em;
-      padding: 1em;
       border: 1px solid #313131;
     }
     .memory_graph header {
       position: absolute;
       text-align: center;
-
-      z-index: 100;
-
+    }
+    .memory_graph .graph {
     }
     .info-category {
       float: left;
@@ -149,14 +127,13 @@
   <header id="header">
     <h1>Redis Monitor</h1>
   </header>
-  <!--<div id=rtilist></div>-->
-  <div id=data></div>
-  <!--<footer id=ticker></footer>-->
+  <div id="servers"></div>
 
 <script src="/js/jquery-1.7.2.min.js"></script>
 <script src="/socket.io/socket.io.js"></script>
 <script src="/js/lodash.min.js"></script>
 <script src="/js/d3.min.js"></script>
+<script src="/js/d3.layout.min.js"></script>
 <script src="/js/rickshaw.min.js"></script>
 <script>
   var infoCategories = {
@@ -243,26 +220,24 @@
     $('#rtilist').text(list.slice(-1))
 
     _.each(list, function (monitor) {
-      monitors[monitor] = {
-        name: monitor
-      }
+      monitors[monitor] = { name: monitor }
 
       socket.on(monitor, function (data) {
         var infoStr = JSON.stringify(data.info, null, 2)
-        var monid = monitor.replace(/:/g, '_')
+          ,  monid = monitor.replace(/:/g, '_')
 
-        $('#data').append($("<div/>", {
-          id: monid,
-          title: data.name,
-          click: function(){ $(this).toggleClass("minimize") }
-        })
+        if ($('#'+monid).length > 0) {
+          return console.log('Redis Server already defined: ' + monitor + '.', monid)
+        }
+
+        $('#servers').append($("<div/>", { id: monid, 'class': 'server' })
             .append($("<header/>", {
               id: monid+'_overview',
               'class': 'rtiheading',
               html: '<h3 class="rid">'+data.name+'</h3><p class="role"></p>'
             }))
             .append($("<div/>", {
-              "class": "headsup",
+              'class': "headsup",
               html: '<div class="hud">' +
                       ' <label>Memory</label>' +
                       ' <div id="'+monid+'_used_memory_human"></div>' +
@@ -287,16 +262,20 @@
             .append($("<div/>", {
               id: monid+'_memory',
               'class': 'memory_graph',
-              html: '<header>RSS</header><div class="legend"></div><div class="graph"></div>'
+              html: '<header>Memory</header><div class="graph"></div>' // <div class="legend"></div>
             }))
             .append($("<div/>", { id: monid+'_info' })))
 
-        $('#'+monid+'_memory .graph')
-
+        // Render info categories and fields
         var categoryId
+
         _.each(infoCategories, function (fields, category) {
           categoryId = monid+'_info_'+category.toLowerCase()
-          $('#'+monid+'_info').append($("<div/>", { id: categoryId, 'class': 'info-category' }).append($('<div/>', { 'class': 'category', text: '# '+category })))
+
+          $('#'+monid+'_info')
+              .append($("<div/>", { id: categoryId, 'class': 'info-category' })
+              .append($('<div/>', { 'class': 'category', text: '# '+category })))
+
           _.each(fields, function (enabled, key) {
             knownFields[key] = 1
             if (enabled) {
@@ -307,31 +286,39 @@
           })
         })
 
-        var memx = Date.now();
+        var palette = new Rickshaw.Color.Palette({ scheme: 'classic9' });
 
+        // Graphs: Specifically, memory graph
         monitors[monitor].graphs = {
           memory: {
             graph: new Rickshaw.Graph({
               element: document.querySelector('#'+monid+'_memory .graph'),
-              width: 1050,
+              width: 1080,
               height: 100,
-              series: [{
-                color: 'steelblue',
-                data: [ { x: memx, y: 23}, { x: memx+1, y: 25}, { x: memx+1, y: 2} ],
-                name: 'rss'
-              }]
+              renderer: 'area',
+              stroke: true,
+              series: new Rickshaw.Series([{
+                color: palette.color(),
+                data: [{ x: now(), y: +data.info.used_memory }],
+                name: 'Used Memory'
+              }])
             })
           }
         };
 
-        monitors[monitor].graphs.memory.legend = new Rickshaw.Graph.Legend({
-          graph: monitors[monitor].graphs.memory.graph,
-          element: document.querySelector('#'+monid+'_memory .legend')
-        })
+        console.log(+data.info.used_memory)
+//        monitors[monitor].graphs.memory.legend = new Rickshaw.Graph.Legend({
+//          graph: monitors[monitor].graphs.memory.graph,
+//          element: document.querySelector('#'+monid+'_memory .legend')
+//        })
 
         monitors[monitor].graphs.memory.graph.render();
 
-        console.log('data.info', data.info)
+        var xAxis = new Rickshaw.Graph.Axis.Time({ graph: monitors[monitor].graphs.memory.graph });
+        var yAxis = new Rickshaw.Graph.Axis.Y({ graph: monitors[monitor].graphs.memory.graph});
+
+        xAxis.render();
+        yAxis.render();
 
         $.each(data.info, function(key, val) {
           // TODO: move evaluation out of this loop
@@ -347,7 +334,14 @@
         })
 
         socket.of('/rti').on(monitor+':update', function (data) {
-          console.log(data)
+          if (data.used_memory) {
+            var dataPoint = { x: now(), y: +data.used_memory },
+                memgraph = monitors[monitor].graphs.memory.graph
+
+            console.log('memory data point', dataPoint.x, dataPoint.y)
+            memgraph.series.addData({ x: now(), y: +data.used_memory })
+            memgraph.render()
+          }
 
           $.each(data, function(key, val) {
             if (key === 'used_memory_human') { $('#'+monid+'_used_memory_human').text(val) }
@@ -366,79 +360,33 @@
     })
   })
 
-  $('#nodeId').live('dblclick', function() { socket.emit('restart') })
-
-
   window.onload = function() {
 
-    var history_freemem = [];
+  }
 
-    var vis_w = 400, vis_h = 100;
-    var vis_freemem = d3.select('#chart-freemem').append("svg:svg")
-        .attr('width', vis_w).attr('height', vis_h)
-        .append("svg:g");
-
-    var max_history = vis_w / 2;
-
-    socket.on('os', function(data) {
-      history_freemem.push(data.freemem);
-      if (history_freemem.length > max_history) history_freemem.shift();
-
-      var os_string = data.hostname + " (" + data.type + " " + data.release + ")";
-      d3.select('#os-hostname').text(os_string);
-      var uptime = {
-        d: Math.floor(data.uptime / 24 / 60 / 60),
-        h: Math.floor(data.uptime / 60 / 60) % 24,
-        m: Math.floor(data.uptime / 60) % 60,
-        s: data.uptime % 60
-      };
-      d3.select('#os-uptime').text(uptime.d + "d " + uptime.h + "h" + uptime.m + "m" + uptime.s);
-      var ki = 1024 * 1024;
-      d3.select('#os-mem').text(data.freemem / ki + " / " + data.totalmem / ki + " MiB");
-      d3.select('#os-loadavg').text(data.loadavg[0] + " / " + data.loadavg[1] + " / " + data.loadavg[2]);
-
-      var vis_freemem_y = d3.scale.linear()
-                                  .domain([0, data.totalmem])
-                                  .range([vis_h, 0]);
-      vis_freemem.selectAll('rect')
-                    .data(history_freemem)
-                    .enter().append('svg:rect')
-                    .attr('x', function(d, i) { return i * 2; })
-                    .attr('height', vis_freemem_y)
-                    .attr('width', 2);
-    });
-
-    socket.on('ps', function(data) {
-      d3.select('#stdout-ps').text(data.stdout);
-    });
-
-  };
+  function now () {
+    return (new Date).getTime()
+  }
 
   function relativeTime(time) {
-
     var sPerMinute = 60
       , sPerHour = sPerMinute * 60
       , sPerDay = sPerHour * 24
       , sPerMonth = sPerDay * 30
-      , sPerYear = sPerDay * 365;
+      , sPerYear = sPerDay * 365
 
     if (time < sPerMinute) {
-      return Math.round(time) + ' s';
-    }
-    else if (time < sPerHour) {
-      return Math.round(time/sPerMinute) + ' m';
-    }
-    else if (time < sPerDay ) {
-      return Math.round(time/sPerHour ) + ' h';
-    }
-    else if (time < sPerMonth) {
-      return Math.round(time/sPerDay) + ' d';
-    }
-    else if (time < sPerYear) {
-      return Math.round(time/sPerMonth) + ' M';
-    }
-    else {
-      return Math.round(time/sPerYear ) + ' Y';
+      return Math.round(time) + ' s'
+    } else if (time < sPerHour) {
+      return Math.round(time/sPerMinute) + ' m'
+    } else if (time < sPerDay ) {
+      return Math.round(time/sPerHour ) + ' h'
+    } else if (time < sPerMonth) {
+      return Math.round(time/sPerDay) + ' d'
+    } else if (time < sPerYear) {
+      return Math.round(time/sPerMonth) + ' M'
+    } else {
+      return Math.round(time/sPerYear ) + ' Y'
     }
   }
 </script>
