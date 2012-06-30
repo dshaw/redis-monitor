@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 /*!
  * redis-monitor
  * Copyright(c) 2012 Daniel D. Shaw <dshaw@dshaw.com>
@@ -9,25 +8,24 @@
  * Module dependencies.
  */
 
-var optimist = require('optimist')
+var util = require('util')
+  , EventEmitter = require('events').EventEmitter
   , redis = require('redis')
+  , sia = require('socket.io-announce')
   , uuid = require('node-uuid')
-  , sioann = require('socket.io-announce')
 
 /**
  * Configuration.
  */
 
 var defaults = {
-      announce: false
+      announce: true
     , monitor: false
     , debug: false
     , room: 'rti'
     , interval: 10*1000
     }
   , options = {}
-  , client = null
-  , announce = null
   , logger = console
   , debug = function noop () {}
   , lastUpdate = null
@@ -37,15 +35,7 @@ var defaults = {
  * Exports.
  */
 
-if(!module.parent) {
-  // Not imported as a module. Run monitor.
-  options = optimist.default(defaults).argv
-  options.required = false
-  createClient(options)
-} else {
-  module.exports = createClient
-}
-
+module.exports = RedisMonitor
 
 /**
  * Create Redis Monitor Client.
@@ -54,7 +44,16 @@ if(!module.parent) {
  * @return {*}
  */
 
-function createClient (opts) {
+function RedisMonitor (opts) {
+  if (!(this instanceof RedisMonitor)) {
+    console.log('instantiating')
+    return new RedisMonitor(opts);
+  }
+
+  this.waiting = 2
+
+  var self = this;
+
   opts || (opts = {})
 
   if (typeof opts.required === 'undefined' || opts.required !== false) {
@@ -66,73 +65,85 @@ function createClient (opts) {
     })
   }
 
-  client = redis.createClient(options.port, options.host, options)
-  announce = sioann.createClient(options.annport || options.port, options.annhost || options.host, options)
-
   if (options.logger) options.logger = require(options.logger)
   if (options.debug) debug = console.log
 
-  /**
-   * RTI.
-   */
+  debug(options)
+  this.options = options
 
-  // realtime info
-  client.rti = {
-    name: options.name || 'rti:' + uuid.v4()
-  , room: options.room
-  , interval: options.interval
-  , info: {}
+  // Realtime info
+  this.rti = {
+      name: options.name || 'rti:' + uuid.v4()
+    , room: options.room
+    , interval: options.interval
+    , info: {}
   }
 
-  // realtime info methods (exposed for tests)
-  client.rtim = {
-    parseChanges: parseChanges
-  , parseInfo: parseInfo
+  // Realtime info methods (exposed for tests)
+  this.rtim = {
+      parseChanges: parseChanges
+    , parseInfo: parseInfo
   }
 
-  client.on('rti', function _onRti (rti) {
-    client.set(client.rti.name, JSON.stringify(rti));
-    client.sadd('rti:list', client.rti.name)
+  // Client that polls monitored redis instance
+  this.monitoredClient = redis.createClient(options.port, options.host, options)
+
+  this.monitoredClient.once('ready', function onMCReady () {
+    self.emit('ready')
   })
 
-  /**
-   * INFO status interval.
-   */
+  // Socket.io-Announce
+  this.announce = sia({
+    pub: {
+      port: options.annport || options.port,
+      host: options.annhost || options.host
+    }
+  })
 
-  _handleInterval()
-  client.rti.intervalId = setInterval(_handleInterval, client.rti.interval)
+  // Socket.io-Announce redis client
+  this.announceClient = this.announce.pub
 
-  /**
-   * Socket.io announce.
-   */
+  this.announceClient.once('ready', function onAnnounceReady () {
+    self.emit('ready')
+  })
 
-  if (options.announce) {
-    client.on('rti', function _onRti (rti) {
-      announce.in(options.room).emit('rti:new', rti)
-    })
-    client.on('update', function (update) {
-      debug(options.room, update)
-      announce.in(options.room).emit(client.rti.name+':update', update)
-    })
-  }
+  // Apply realtime info info
+  this.on('rti', function _onRti (rti) {
+    self.announceClient.set(self.rti.name, JSON.stringify(rti), redis.print);
+    self.announceClient.sadd('rti:list', self.rti.name, redis.print)
+    self.announce.in(options.room).emit('rti:new', rti)
+  })
+
+  // Announce update deltas
+  this.on('update', function (update) {
+    self.announce.in(options.room).emit(self.rti.name+':update', update)
+  })
 
   /**
    * Monitor - use with extreme caution (http://redis.io/commands/monitor).
    */
 
-  if (options.monitor) {
-    client.monitor(function (err, res) {
+  if (false && options.monitor) { // taking monitor off the table for now
+    // create a new redis client since monitor mode is one of the special modes
+    var mc = this.monitorClient = redis.createClient(options.port, options.host, options)
+      , monitorCache = []
+
+    mc.monitor(function (err, res) {
       if (err) return logger.error(err)
       debug('Entering monitoring mode.')
     })
 
-    client.on('monitor', function (time, args) {
+    mc.on('monitor', function (time, args) {
       if (args[0] !== 'info') {
-        var intervalSec = client.rti.interval/1000
+        var intervalSec = self.rti.interval/1000
           , delta = Math.round(time) - Math.round(lastUpdate/1000) // seconds
 
+        monitorCache.push(args)
+
         if (!lastUpdate || delta > intervalSec) {
-          client.info(_updateInfo)
+          self._updateMonitor(monitorCache, function (err) {
+            if (!err) monitorCache = []
+          })
         }
       }
     })
@@ -143,12 +154,58 @@ function createClient (opts) {
    */
 
   if (options.debug) {
-    client.on('update', function (update) {
+    this.on('update', function (update) {
       debug('update', update)
     })
   }
 
-  return client
+  this.on('ready', function () {
+    self.waiting--;
+    console.log('waiting', self.waiting)
+    if (!self.waiting) {
+      function _handleInterval () {
+        self.monitoredClient.info(self._updateInfo.bind(self))
+      }
+
+      _handleInterval()
+      self.rti.intervalId = setInterval(_handleInterval, self.rti.interval)
+    }
+  })
+}
+
+/**
+ * Inherits from EventEmitter.
+ */
+
+util.inherits(RedisMonitor, EventEmitter);
+
+/**
+ * Update Info and emit changes.
+ *
+ * @param err
+ * @param infoStr
+ * @return {*}
+ * @private
+ */
+
+RedisMonitor.prototype._updateInfo = function (err, infoStr) {
+  if (err) return logger.error(err)
+
+  var info = parseInfo(infoStr)
+    , changes = parseChanges(this.rti.info, info)
+
+  this.rti.info = info
+
+  if (!this.rti.initialized) {
+    this.emit('rti', this.rti)
+    this.rti.initialized = true
+  }
+
+  if (changes && Object.keys(changes).length) {
+    this.emit('update', changes)
+    lastUpdate = Date.now()
+    updates++;
+  }
 }
 
 
@@ -186,42 +243,4 @@ function parseInfo (info) {
     if (kv[1]) acc[kv[0]] = kv[1]
     return acc
   }, {})
-}
-
-/**
- * Interval handler.
- *
- * @private
- */
-function _handleInterval () {
-  client.info(_updateInfo)
-}
-
-/**
- * Update Info and emit changes.
- *
- * @param err
- * @param infoStr
- * @return {*}
- * @private
- */
-
-function _updateInfo (err, infoStr) {
-  if (err) return logger.error(err)
-
-  var info = parseInfo(infoStr)
-    , changes = parseChanges(client.rti.info, info)
-
-  client.rti.info = info
-
-  if (!client.rti.initialized) {
-    client.emit('rti', client.rti)
-    client.rti.initialized = true
-  }
-
-  if (changes && Object.keys(changes).length) {
-    client.emit('update', changes)
-    lastUpdate = Date.now()
-    updates++
-  }
 }
