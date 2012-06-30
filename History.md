@@ -1,4 +1,9 @@
 
+0.0.4 / 2012-06-30
+==================
+
+  * Added stand-alone monitoring server (without http or socket.io).
+
 0.0.3 / 2012-06-30
 ==================
 
