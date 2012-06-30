@@ -2,6 +2,14 @@
 
 Realtime Redis [INFO](http://redis.io/commands/info) monitoring
 
+## Usage
+
+    // monitor your local redis with socket.io-announce driven dashboard
+    node server.js
+
+    // broadcast redis monitoring data to realtime dashboard server
+    node monitor.js --name redis-slave-1 --port 6380 --annport 6379
+
 ## Install
 
     npm install redis-monitor

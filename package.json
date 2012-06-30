@@ -1,6 +1,6 @@
 {
   "name": "redis-monitor",
-  "version": "0.0.4",
+  "version": "0.0.5-pre",
   "description": "Monitor all your Redis",
   "keywords": [
     "redis",
