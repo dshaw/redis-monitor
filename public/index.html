@@ -3,11 +3,43 @@
 <head>
   <meta charset="utf-8">
   <title>Redis Monitor by @dshaw</title>
+  <link type="text/css" rel="stylesheet" href="/css/rickshaw.min.css">
   <style>
-    body { margin: 0 }
+    body {
+      margin: 0;
+      font-family: sans-serif;
+    }
+    #header {
+      width: 100%;
+      /*height: 100%;*/
+      padding: .25em 1.5em;
+      border-top: 1px solid black;
+      background-color: #333;
+      background: -webkit-gradient(linear, 50% 0%, 50% 100%, color-stop(0%, #323232), color-stop(100%, #000000));
+      background: -webkit-linear-gradient(#323232, #000000); background: -moz-linear-gradient(#323232, #000000);
+      background: -o-linear-gradient(#323232, #000000);
+      background: -ms-linear-gradient(#323232, #000000);
+      background: linear-gradient(#323232, #000000);
+      color: #C0C1C5;
+      /*height: 45px;*/
+      -webkit-transform: scale(1);
+      -webkit-box-shadow: #999999, 0px, 4px, 8px;
+      -moz-box-shadow: #999999, 0px, 4px, 8px;
+      box-shadow: #999999, 0px, 4px, 8px;
+      *zoom: 1;
+    }
+    .rtiheading {
+      background: url(/images/redis-small.png) no-repeat 0 4px;
+      padding-left: 50px;
+      min-height: 40px;
+      margin-bottom: .6em;
+    }
+    .rtiheading h3, .rtiheading p {
+      margin: 0 0 .1em 0;
+    }
     #rtilist {
       width: 100%;
-      height: 100%;
+      /*height: 100%;*/
       padding: 2em;
       background-color: white;
       color: black;
@@ -16,6 +48,26 @@
       text-shadow: 4px 4px 1px #e5e5e5;
       -webkit-transform: scale(1);
     }
+    #data {
+      width: 100%;
+      /*height: 100%;*/
+      padding: 2em;
+      background-color: white;
+      color: black;
+    }
+    #data .name {
+      color: #4682b4;
+      font-weight: bold;
+      text-shadow: 4px 4px 1px #e5e5e5;
+      margin: 0 2px 8px 2px;
+    }
+    #data .info { background-color: rgba(120,120,120,.5) }
+    #data .key, #data .val {
+      display: inline-block;
+      width: 250px;
+      margin: 2px;
+    }
+    #data .key { margin-right: 10px }
     #ticker {
       position: absolute;
       bottom: 0;
@@ -34,37 +86,361 @@
     #ticker .reserved { background-color: rgba(255,255,0,.5) }
     #ticker .purchased { background-color: rgba(0,255,0,.5) }
     #ticker .activity { background-color: rgba(255,0,0,.5) }
+    .minimize {}
+    .rid { color: #DE2B21 }
+    .headsup {
+      clear: both;
+      margin-bottom: 1em;
+    }
+    .hud {
+      float: left;
+      margin: 0 .8em .8em 0;
+      background-color: #2176DE;
+      background-color: rgba(33,118,222, .4);
+      width: 200px;
+      padding: .2em;
+      min-height: 3em;
+    }
+    .hud label {
+      display: block;
+      text-align: center;
+      color: #313131;
+    }
+    .hud div {
+      padding: .2em;
+      text-align: center;
+      font-size: 1.4em;
+      color: #2176DE;
+      color: rgba(33,118,222, 1);
+    }
+    .memory_graph {
+      clear: both;
+      width: 1050px;
+      position: relative;
+      margin-bottom: 1em;
+      padding: 1em;
+      border: 1px solid #313131;
+    }
+    .memory_graph header {
+      position: absolute;
+      text-align: center;
+
+      z-index: 100;
+
+    }
+    .info-category {
+      float: left;
+      margin: 0 .8em .8em 0;
+      border: 1px solid #E2E2E2;
+      width: 527px;
+      padding: .2em;
+      overflow: hidden;
+    }
+    .info-category .key {
+      padding-left: .2em;
+      color: #313131;
+    }
+    .os {
+      clear: both;
+    }
   </style>
 </head>
 <body>
-<div id=rtilist></div>
-<footer id=ticker></footer>
+  <header id="header">
+    <h1>Redis Monitor</h1>
+  </header>
+  <!--<div id=rtilist></div>-->
+  <div id=data></div>
+  <!--<footer id=ticker></footer>-->
 
 <script src="/js/jquery-1.7.2.min.js"></script>
 <script src="/socket.io/socket.io.js"></script>
+<script src="/js/lodash.min.js"></script>
+<script src="/js/d3.min.js"></script>
+<script src="/js/rickshaw.min.js"></script>
 <script>
-  var socket = io.connect()
+  var infoCategories = {
+    'Server': {
+      'redis_version': 1,
+      'redis_git_sha1': 0,
+      'redis_git_dirty': 0,
+      'os': 1,
+      'arch_bits': 1,
+      'multiplexing_api': 1,
+      'gcc_version': 1,
+      'process_id': 1,
+      'run_id': 0,
+      'tcp_port': 1,
+      'uptime_in_seconds': 1,
+      'uptime_in_days': 1,
+      'lru_clock': 1
+    },
+    'Clients': {
+      'connected_clients': 1,
+      'client_longest_output_list': 1,
+      'client_biggest_input_buf': 1,
+      'blocked_clients': 1
+    },
+    'Memory': {
+      'used_memory': 1,
+      'used_memory_human': 1,
+      'used_memory_rss': 1,
+      'used_memory_peak': 1,
+      'used_memory_peak_human': 1,
+      'used_memory_lua': 1,
+      'mem_fragmentation_ratio': 1,
+      'mem_allocator': 1
+    },
+    'Persistence': {
+      'loading': 1,
+      'rdb_changes_since_last_save': 1,
+      'rdb_bgsave_in_progress': 1,
+      'rdb_last_save_time': 1,
+      'rdb_last_bgsave_status': 1,
+      'rdb_last_bgsave_time_sec': 1,
+      'rdb_current_bgsave_time_sec': 1,
+      'aof_enabled': 1,
+      'aof_rewrite_in_progress': 1,
+      'aof_rewrite_scheduled': 1,
+      'aof_last_rewrite_time_sec': 1,
+      'aof_current_rewrite_time_sec': 1
+    },
+    'Stats': {
+      'total_connections_received': 1,
+      'total_commands_processed': 1,
+      'instantaneous_ops_per_sec': 1,
+      'rejected_connections': 1,
+      'expired_keys': 1,
+      'evicted_keys': 1,
+      'keyspace_hits': 1,
+      'keyspace_misses': 1,
+      'pubsub_channels': 1,
+      'pubsub_patterns': 1,
+      'latest_fork_usec': 1
+    },
+    'Replication': {
+      'role': 1,
+      'connected_slaves': 1
+    },
+    'CPU': {
+      'used_cpu_sys': 1,
+      'used_cpu_user': 1,
+      'used_cpu_sys_children': 1,
+      'used_cpu_user_children': 1
+    },
+    'Cluster': {
+      'cluster_enabled': 1
+    },
+    'Keyspace': {
+      'db0': 1
+    }
+  },
+  knownFields = {},
+  monitors = {},
+  socket = io.connect()
 
   socket.on('rti:list', function (list) {
-    $('#rtilist').text(JSON.stringify(list))
+    $('#rtilist').text(list.slice(-1))
 
-    if (list.length) {
-      var monitor = list[0]
+    _.each(list, function (monitor) {
+      monitors[monitor] = {
+        name: monitor
+      }
 
-      socket.on(monitor, function (info) {
-        $('#rtilist').prepend('<div>'+monitor+'<br>'+JSON.stringify(info, null, 2)+'</div>')
-      })
-      socket.on(monitor+':update', function (info) {
-        console.log(monitor+':update', info)
-        $('#rtilist').prepend('<div>'+monitor+':update<br>'+JSON.stringify(info, null, 2)+'</div>')
+      socket.on(monitor, function (data) {
+        var infoStr = JSON.stringify(data.info, null, 2)
+        var monid = monitor.replace(/:/g, '_')
+
+        $('#data').append($("<div/>", {
+          id: monid,
+          title: data.name,
+          click: function(){ $(this).toggleClass("minimize") }
+        })
+            .append($("<header/>", {
+              id: monid+'_overview',
+              'class': 'rtiheading',
+              html: '<h3 class="rid">'+data.name+'</h3><p class="role"></p>'
+            }))
+            .append($("<div/>", {
+              "class": "headsup",
+              html: '<div class="hud">' +
+                      ' <label>Memory</label>' +
+                      ' <div id="'+monid+'_used_memory_human"></div>' +
+                      '</div>' +
+                      '<div class="hud">' +
+                      ' <label>CPU Sys</label>' +
+                      ' <div id="'+monid+'_used_cpu_sys"></div>' +
+                      '</div>' +
+                      '<div class="hud">' +
+                      ' <label>CPU User</label>' +
+                      ' <div id="'+monid+'_used_cpu_user"></div>' +
+                      '</div>' +
+                      '<div class="hud">' +
+                      ' <label>Commands Processed</label>' +
+                      ' <div id="'+monid+'_total_commands_processed"></div>' +
+                      '</div>' +
+                      '<div class="hud">' +
+                      ' <label>Uptime</label>' +
+                      ' <div id="'+monid+'_uptime_in_seconds"></div>' +
+                      '</div>'
+            }))
+            .append($("<div/>", {
+              id: monid+'_memory',
+              'class': 'memory_graph',
+              html: '<header>RSS</header><div class="legend"></div><div class="graph"></div>'
+            }))
+            .append($("<div/>", { id: monid+'_info' })))
+
+        $('#'+monid+'_memory .graph')
+
+        var categoryId
+        _.each(infoCategories, function (fields, category) {
+          categoryId = monid+'_info_'+category.toLowerCase()
+          $('#'+monid+'_info').append($("<div/>", { id: categoryId, 'class': 'info-category' }).append($('<div/>', { 'class': 'category', text: '# '+category })))
+          _.each(fields, function (enabled, key) {
+            knownFields[key] = 1
+            if (enabled) {
+              $('#'+categoryId)
+                  .append($('<div/>', { 'class': 'key', text: key }))
+                  .append($('<div/>', { 'id': key+'_val', 'class': 'val' }))
+            }
+          })
+        })
+
+        var memx = Date.now();
+
+        monitors[monitor].graphs = {
+          memory: {
+            graph: new Rickshaw.Graph({
+              element: document.querySelector('#'+monid+'_memory .graph'),
+              width: 1050,
+              height: 100,
+              series: [{
+                color: 'steelblue',
+                data: [ { x: memx, y: 23}, { x: memx+1, y: 25}, { x: memx+1, y: 2} ],
+                name: 'rss'
+              }]
+            })
+          }
+        };
+
+        monitors[monitor].graphs.memory.legend = new Rickshaw.Graph.Legend({
+          graph: monitors[monitor].graphs.memory.graph,
+          element: document.querySelector('#'+monid+'_memory .legend')
+        })
+
+        monitors[monitor].graphs.memory.graph.render();
+
+        console.log('data.info', data.info)
+
+        $.each(data.info, function(key, val) {
+          // TODO: move evaluation out of this loop
+          if (key === 'role') { $('#'+monid+'_overview .role').text(val) }
+          if (key === 'used_memory_human') { $('#'+monid+'_used_memory_human').text(val) }
+          if (key === 'used_cpu_sys') { $('#'+monid+'_used_cpu_sys').text(val) }
+          if (key === 'used_cpu_user') { $('#'+monid+'_used_cpu_user').text(val) }
+          if (key === 'used_cpu_user') { $('#'+monid+'_used_cpu_user').text(val) }
+          if (key === 'total_commands_processed') { $('#'+monid+'_total_commands_processed').text(val) }
+          if (key === 'uptime_in_seconds') { $('#'+monid+'_uptime_in_seconds').text(relativeTime(val)) }
+
+          $('#'+key+'_val').text(val)
+        })
+
+        socket.of('/rti').on(monitor+':update', function (data) {
+          console.log(data)
+
+          $.each(data, function(key, val) {
+            if (key === 'used_memory_human') { $('#'+monid+'_used_memory_human').text(val) }
+            if (key === 'used_cpu_sys') { $('#'+monid+'_used_cpu_sys').text(val) }
+            if (key === 'used_cpu_user') { $('#'+monid+'_used_cpu_user').text(val) }
+            if (key === 'used_cpu_user') { $('#'+monid+'_used_cpu_user').text(val) }
+            if (key === 'total_commands_processed') { $('#'+monid+'_total_commands_processed').text(val) }
+            if (key === 'uptime_in_seconds') { $('#'+monid+'_uptime_in_seconds').text(relativeTime(val)) }
+            $('#'+key+'_val').text(val)
+          })
+        })
       })
 
       console.log('rti:info', monitor)
-      socket.emit('rti:info', monitor)
-    }
+      socket.emit('rti:info', monitor) // request information about this Redis
+    })
   })
 
   $('#nodeId').live('dblclick', function() { socket.emit('restart') })
+
+
+  window.onload = function() {
+
+    var history_freemem = [];
+
+    var vis_w = 400, vis_h = 100;
+    var vis_freemem = d3.select('#chart-freemem').append("svg:svg")
+        .attr('width', vis_w).attr('height', vis_h)
+        .append("svg:g");
+
+    var max_history = vis_w / 2;
+
+    socket.on('os', function(data) {
+      history_freemem.push(data.freemem);
+      if (history_freemem.length > max_history) history_freemem.shift();
+
+      var os_string = data.hostname + " (" + data.type + " " + data.release + ")";
+      d3.select('#os-hostname').text(os_string);
+      var uptime = {
+        d: Math.floor(data.uptime / 24 / 60 / 60),
+        h: Math.floor(data.uptime / 60 / 60) % 24,
+        m: Math.floor(data.uptime / 60) % 60,
+        s: data.uptime % 60
+      };
+      d3.select('#os-uptime').text(uptime.d + "d " + uptime.h + "h" + uptime.m + "m" + uptime.s);
+      var ki = 1024 * 1024;
+      d3.select('#os-mem').text(data.freemem / ki + " / " + data.totalmem / ki + " MiB");
+      d3.select('#os-loadavg').text(data.loadavg[0] + " / " + data.loadavg[1] + " / " + data.loadavg[2]);
+
+      var vis_freemem_y = d3.scale.linear()
+                                  .domain([0, data.totalmem])
+                                  .range([vis_h, 0]);
+      vis_freemem.selectAll('rect')
+                    .data(history_freemem)
+                    .enter().append('svg:rect')
+                    .attr('x', function(d, i) { return i * 2; })
+                    .attr('height', vis_freemem_y)
+                    .attr('width', 2);
+    });
+
+    socket.on('ps', function(data) {
+      d3.select('#stdout-ps').text(data.stdout);
+    });
+
+  };
+
+  function relativeTime(time) {
+
+    var sPerMinute = 60
+      , sPerHour = sPerMinute * 60
+      , sPerDay = sPerHour * 24
+      , sPerMonth = sPerDay * 30
+      , sPerYear = sPerDay * 365;
+
+    if (time < sPerMinute) {
+      return Math.round(time) + ' s';
+    }
+    else if (time < sPerHour) {
+      return Math.round(time/sPerMinute) + ' m';
+    }
+    else if (time < sPerDay ) {
+      return Math.round(time/sPerHour ) + ' h';
+    }
+    else if (time < sPerMonth) {
+      return Math.round(time/sPerDay) + ' d';
+    }
+    else if (time < sPerYear) {
+      return Math.round(time/sPerMonth) + ' M';
+    }
+    else {
+      return Math.round(time/sPerYear ) + ' Y';
+    }
+  }
 </script>
 </body>
 </html>
