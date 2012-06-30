@@ -1,4 +1,12 @@
 
+0.0.3 / 2012-06-30
+==================
+
+  * Completely revamped `redis-monitor` after having issues monitoring a slave.
+  * Update server with new `redis-monitor` plumbing.
+  * Updated monitoring front end.
+  * Update socket.io-announce.
+
 0.0.2 / 2012-06-19
 ==================
 
