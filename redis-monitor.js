@@ -19,8 +19,7 @@ var util = require('util')
  */
 
 var defaults = {
-      announce: true
-    , monitor: false
+      monitor: false
     , debug: false
     , room: 'rti'
     , interval: 10*1000
@@ -45,12 +44,9 @@ module.exports = RedisMonitor
  */
 
 function RedisMonitor (opts) {
-  if (!(this instanceof RedisMonitor)) {
-    console.log('instantiating')
-    return new RedisMonitor(opts);
-  }
+  if (!(this instanceof RedisMonitor)) { return new RedisMonitor(opts) }
 
-  this.waiting = 2
+  this.waiting = 2 // wait until both the monitorClient and announceClient are ready
 
   var self = this;
 
@@ -86,9 +82,9 @@ function RedisMonitor (opts) {
   }
 
   // Client that polls monitored redis instance
-  this.monitoredClient = redis.createClient(options.port, options.host, options)
+  this.monitorClient = redis.createClient(options.port, options.host, options)
 
-  this.monitoredClient.once('ready', function onMCReady () {
+  this.monitorClient.once('ready', function onMCReady () {
     self.emit('ready')
   })
 
@@ -164,7 +160,7 @@ function RedisMonitor (opts) {
     console.log('waiting', self.waiting)
     if (!self.waiting) {
       function _handleInterval () {
-        self.monitoredClient.info(self._updateInfo.bind(self))
+        self.monitorClient.info(self._updateInfo.bind(self))
       }
 
       _handleInterval()
