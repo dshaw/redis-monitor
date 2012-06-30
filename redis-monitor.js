@@ -24,11 +24,8 @@ var defaults = {
     , room: 'rti'
     , interval: 10*1000
     }
-  , options = {}
   , logger = console
   , debug = function noop () {}
-  , lastUpdate = null
-  , updates = 0
 
 /**
  * Exports.
@@ -37,35 +34,33 @@ var defaults = {
 module.exports = RedisMonitor
 
 /**
- * Create Redis Monitor Client.
+ * Redis Monitor
  *
- * @param opts
- * @return {*}
+ * @param options
+ * @return {RedisMonitor}
+ * @constructor
  */
 
-function RedisMonitor (opts) {
-  if (!(this instanceof RedisMonitor)) { return new RedisMonitor(opts) }
+function RedisMonitor (options) {
+  if (!(this instanceof RedisMonitor)) { return new RedisMonitor(options) }
 
-  this.waiting = 2 // wait until both the monitorClient and announceClient are ready
+  options || (options = {})
 
-  var self = this;
-
-  opts || (opts = {})
-
-  if (typeof opts.required === 'undefined' || opts.required !== false) {
-    Object.keys(defaults).forEach(function (def) {
-      if (!options[def]) options[def] = defaults[def]
-    })
-    Object.keys(opts).forEach(function (def) {
-      options[def] = opts[def]
-    })
-  }
+  Object.keys(defaults).forEach(function (def) {
+    if (!options[def]) options[def] = defaults[def]
+  })
 
   if (options.logger) options.logger = require(options.logger)
   if (options.debug) debug = console.log
 
-  debug(options)
   this.options = options
+  debug(options)
+
+  var self = this;
+
+  this.waiting = 2 // wait until both the monitorClient and announceClient are ready
+  this.lastUpdate = null
+  this.updates = 0
 
   // Realtime info
   this.rti = {
@@ -85,6 +80,7 @@ function RedisMonitor (opts) {
   this.monitorClient = redis.createClient(options.port, options.host, options)
 
   this.monitorClient.once('ready', function onMCReady () {
+    debug("monitorClient ready")
     self.emit('ready')
   })
 
@@ -100,71 +96,38 @@ function RedisMonitor (opts) {
   this.announceClient = this.announce.pub
 
   this.announceClient.once('ready', function onAnnounceReady () {
+    debug("announceClient ready")
     self.emit('ready')
   })
 
   // Apply realtime info info
   this.on('rti', function _onRti (rti) {
-    self.announceClient.set(self.rti.name, JSON.stringify(rti), redis.print);
-    self.announceClient.sadd('rti:list', self.rti.name, redis.print)
-    self.announce.in(options.room).emit('rti:new', rti)
+    self.announceClient.set(self.rti.name, JSON.stringify(rti), debug);
+    self.announceClient.sadd('rti:list', self.rti.name, debug)
+    self.announce.in(self.rti.room).emit('rti:new', rti)
   })
 
   // Announce update deltas
   this.on('update', function (update) {
-    self.announce.in(options.room).emit(self.rti.name+':update', update)
+    self.announce.in(self.rti.room).emit(self.rti.name+':update', update)
   })
 
-  /**
-   * Monitor - use with extreme caution (http://redis.io/commands/monitor).
-   */
-
-  if (false && options.monitor) { // taking monitor off the table for now
-    // create a new redis client since monitor mode is one of the special modes
-    var mc = this.monitorClient = redis.createClient(options.port, options.host, options)
-      , monitorCache = []
-
-    mc.monitor(function (err, res) {
-      if (err) return logger.error(err)
-      debug('Entering monitoring mode.')
-    })
-
-    mc.on('monitor', function (time, args) {
-      if (args[0] !== 'info') {
-        var intervalSec = self.rti.interval/1000
-          , delta = Math.round(time) - Math.round(lastUpdate/1000) // seconds
-
-        monitorCache.push(args)
-
-        if (!lastUpdate || delta > intervalSec) {
-          self._updateMonitor(monitorCache, function (err) {
-            if (!err) monitorCache = []
-          })
-        }
-      }
-    })
-  }
-
-  /**
-   * Debug logging.
-   */
-
+  // Debug logging
   if (options.debug) {
     this.on('update', function (update) {
       debug('update', update)
     })
   }
 
+  // Polling interval
   this.on('ready', function () {
     self.waiting--;
-    console.log('waiting', self.waiting)
     if (!self.waiting) {
-      function _handleInterval () {
+      function getInfo () {
         self.monitorClient.info(self._updateInfo.bind(self))
       }
-
-      _handleInterval()
-      self.rti.intervalId = setInterval(_handleInterval, self.rti.interval)
+      getInfo()
+      self.rti.intervalId = setInterval(getInfo, self.rti.interval)
     }
   })
 }
@@ -192,15 +155,17 @@ RedisMonitor.prototype._updateInfo = function (err, infoStr) {
 
   this.rti.info = info
 
-  if (!this.rti.initialized) {
+  if (!this.initialized) {
     this.emit('rti', this.rti)
-    this.rti.initialized = true
+    this.initialized = true
+    this.lastUpdate = Date.now()
+    this.updates++;
   }
 
   if (changes && Object.keys(changes).length) {
     this.emit('update', changes)
-    lastUpdate = Date.now()
-    updates++;
+    this.lastUpdate = Date.now()
+    this.updates++;
   }
 }
 
