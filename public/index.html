@@ -38,7 +38,6 @@
     }
     #rtilist {
       width: 100%;
-      /*height: 100%;*/
       padding: 2em;
       background-color: white;
       color: black;
@@ -48,8 +47,6 @@
       -webkit-transform: scale(1);
     }
     #servers {
-      width: 100%;
-      /*height: 100%;*/
       padding: 2em;
       background-color: white;
       color: black;
@@ -94,6 +91,7 @@
       color: rgba(33,118,222, 1);
     }
     .memory_graph {
+      display: none;
       clear: both;
       width: 1080px;
       position: relative;
@@ -286,7 +284,9 @@
           })
         })
 
-        var palette = new Rickshaw.Color.Palette({ scheme: 'classic9' });
+        var palette = new Rickshaw.Color.Palette({ scheme: 'classic9' })
+        var dp = { x: nows(), y: +data.info.used_memory }
+        console.log('memory data point', dp.x, dp.y)
 
         // Graphs: Specifically, memory graph
         monitors[monitor].graphs = {
@@ -295,18 +295,17 @@
               element: document.querySelector('#'+monid+'_memory .graph'),
               width: 1080,
               height: 100,
-              renderer: 'area',
+              renderer: 'line',
               stroke: true,
               series: new Rickshaw.Series([{
                 color: palette.color(),
-                data: [{ x: now(), y: +data.info.used_memory }],
+                data: [dp],
                 name: 'Used Memory'
               }])
             })
           }
         };
 
-        console.log(+data.info.used_memory)
 //        monitors[monitor].graphs.memory.legend = new Rickshaw.Graph.Legend({
 //          graph: monitors[monitor].graphs.memory.graph,
 //          element: document.querySelector('#'+monid+'_memory .legend')
@@ -314,11 +313,9 @@
 
         monitors[monitor].graphs.memory.graph.render();
 
-        var xAxis = new Rickshaw.Graph.Axis.Time({ graph: monitors[monitor].graphs.memory.graph });
-        var yAxis = new Rickshaw.Graph.Axis.Y({ graph: monitors[monitor].graphs.memory.graph});
-
-        xAxis.render();
-        yAxis.render();
+//        (new Rickshaw.Graph.Axis.Time({ graph: monitors[monitor].graphs.memory.graph })).render();
+//        (new Rickshaw.Graph.Axis.Y({ graph: monitors[monitor].graphs.memory.graph })).render()
+//        new Rickshaw.Graph.HoverDetail({ graph: monitors[monitor].graphs.memory.graph })
 
         $.each(data.info, function(key, val) {
           // TODO: move evaluation out of this loop
@@ -335,11 +332,11 @@
 
         socket.of('/rti').on(monitor+':update', function (data) {
           if (data.used_memory) {
-            var dataPoint = { x: now(), y: +data.used_memory },
+            var dataPoint = { x: nows(), y: +data.used_memory },
                 memgraph = monitors[monitor].graphs.memory.graph
 
             console.log('memory data point', dataPoint.x, dataPoint.y)
-            memgraph.series.addData({ x: now(), y: +data.used_memory })
+            memgraph.series.addData({ x: nows(), y: +data.used_memory })
             memgraph.render()
           }
 
@@ -360,12 +357,9 @@
     })
   })
 
-  window.onload = function() {
-
-  }
-
-  function now () {
-    return (new Date).getTime()
+  // now in seconds
+  function nows () {
+    return Math.round((new Date).getTime() / 1000)
   }
 
   function relativeTime(time) {
